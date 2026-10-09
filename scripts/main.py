@@ -105,9 +105,8 @@ def parse_ss(link):
 def parse_server(link):
     link = link.strip()
     if not link or link.startswith("#"): return None
-    if link.startswith("vmess://"):  return parse_vmess(link)
+    # Only VLESS and Shadowsocks
     if link.startswith("vless://"):  return parse_url_like(link, "vless")
-    if link.startswith("trojan://"): return parse_url_like(link, "trojan")
     if link.startswith("ss://"):     return parse_ss(link)
     return None
 
