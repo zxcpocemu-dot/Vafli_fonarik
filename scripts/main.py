@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freedom-V2Ray filter - VLESS + SS, Europe+nearby, URL test via Xray, max 300."""
+"""Freedom-V2Ray filter - VLESS + SS, Europe+nearby, robust URL test, max 300."""
 import base64, json, os, random, socket, subprocess, sys, tempfile, threading, time, zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
@@ -10,9 +10,10 @@ import requests
 FUNDAMENTAL_URL = "https://raw.githubusercontent.com/MahanKenway/Freedom-V2Ray/main/configs/mix_sub.txt"
 MAX_SERVERS = 300
 TEST_URL = "http://connect.rom.miui.com/generate_204"
-TEST_TIMEOUT = 8.0
-STARTUP_TIMEOUT = 3.0
-PARALLEL = 10
+TEST_TIMEOUT = 15.0      # увеличен с 8 до 15 сек - слабые серверы успевают ответить
+STARTUP_TIMEOUT = 6.0    # увеличен с 3 до 6 сек - xray успевает подняться
+PARALLEL = 8             # уменьшен с 10 до 8 - меньше потерянных ответов
+MAX_RETRY = 2            # количество попыток для провалившихся
 GEO_BATCH_URL = "http://ip-api.com/batch?fields=query,countryCode,status"
 OUTPUT_PATH = Path("output/mix_sub.txt")
 
@@ -154,7 +155,8 @@ def ensure_xray():
 _port_lock = threading.Lock()
 _port_next = [20000]
 
-def url_test(s, xray_bin):
+def url_test_once(s, xray_bin):
+    """Single URL test attempt. Returns latency in ms or None."""
     outbound = build_outbound(s)
     if not outbound: return None
     with _port_lock:
@@ -178,11 +180,11 @@ def url_test(s, xray_bin):
             if proc.poll() is not None:
                 return None
             try:
-                sock = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+                sock = socket.create_connection(("127.0.0.1", port), timeout=0.3)
                 sock.close()
                 started = True; break
             except Exception:
-                time.sleep(0.05)
+                time.sleep(0.08)
         if not started:
             return None
         proxies = {"http": f"socks5h://127.0.0.1:{port}",
@@ -204,6 +206,17 @@ def url_test(s, xray_bin):
                 except Exception: pass
         try: os.unlink(cfg_path)
         except Exception: pass
+
+def url_test(s, xray_bin):
+    """Try URL test up to MAX_RETRY times, return best latency."""
+    best = None
+    for attempt in range(MAX_RETRY):
+        lat = url_test_once(s, xray_bin)
+        if lat is not None:
+            if best is None or lat < best:
+                best = lat
+            break
+    return best
 
 def geo_lookup(hosts):
     result = {}; ip_to_host = {}
@@ -231,7 +244,8 @@ def randomize_name(s):
     return f"{base}#{quote(name)}"
 
 def main():
-    print(f"=== Freedom filter (VLESS+SS, geo, URL test, max {MAX_SERVERS}) ===")
+    print(f"=== Freedom filter (VLESS+SS, robust URL test, max {MAX_SERVERS}) ===")
+    print(f"Settings: TEST_TIMEOUT={TEST_TIMEOUT}s, STARTUP_TIMEOUT={STARTUP_TIMEOUT}s, PARALLEL={PARALLEL}, MAX_RETRY={MAX_RETRY}")
     r = requests.get(FUNDAMENTAL_URL, timeout=30); r.raise_for_status()
     try:
         decoded = base64.b64decode(b64_pad(r.text.strip())).decode("utf-8", errors="ignore")
@@ -264,11 +278,13 @@ def main():
         print("Empty, keeping previous output."); return
 
     xray = ensure_xray()
-    print(f"URL test via {TEST_URL} (parallel {PARALLEL}, timeout {TEST_TIMEOUT}s)...")
+    print(f"URL test via {TEST_URL} (parallel {PARALLEL}, retries {MAX_RETRY})...")
+    print(f"Estimated time: ~{len(pool) * MAX_RETRY * TEST_TIMEOUT / PARALLEL / 60:.0f} min worst case")
     alive = []
     with ThreadPoolExecutor(max_workers=PARALLEL) as ex:
         futs = {ex.submit(url_test, s, xray): s for s in pool}
         done = 0
+        t_start = time.time()
         for fut in as_completed(futs):
             s = futs[fut]
             try: lat = fut.result()
@@ -277,7 +293,9 @@ def main():
                 s["ping"] = lat; alive.append(s)
             done += 1
             if done % 20 == 0:
-                print(f"  url progress {done}/{len(pool)}, alive: {len(alive)}")
+                elapsed = time.time() - t_start
+                eta = elapsed / done * (len(pool) - done)
+                print(f"  progress {done}/{len(pool)}, alive: {len(alive)}, ETA {eta:.0f}s")
     print(f"Alive (URL test passed): {len(alive)}")
     if not alive:
         print("No working servers, keeping previous output."); return
