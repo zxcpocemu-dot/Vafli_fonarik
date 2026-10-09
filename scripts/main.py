@@ -1,31 +1,21 @@
 #!/usr/bin/env python3
-"""Freedom-V2Ray filter v4: OS-aware, real xray test, EU-only, top-100, flags + emoji."""
-import base64, json, os, platform, random, socket, subprocess, sys, tempfile, threading, time, zipfile
+"""Freedom-V2Ray filter for GitHub Actions (Linux only)."""
+import base64, json, os, random, socket, subprocess, sys, tempfile, threading, time, zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote, unquote
 import requests
 
-IS_WINDOWS = platform.system() == "Windows"
 FUNDAMENTAL_URL = "https://raw.githubusercontent.com/MahanKenway/Freedom-V2Ray/main/configs/mix_sub.txt"
-MAX_PING_MS = int(os.environ.get("MAX_PING_MS", "300"))
+MAX_PING_MS = 300
 MAX_SERVERS = 100
 TEST_TIMEOUT = 5.0
 PARALLEL = 15
 GEO_BATCH_URL = "http://ip-api.com/batch?fields=query,countryCode,status"
 OUTPUT_PATH = Path("output/mix_sub.txt")
-
-if IS_WINDOWS:
-    XRAY_DIR = Path("scripts/bin")
-    XRAY_BIN = XRAY_DIR / "xray.exe"
-    XRAY_URL = "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip"
-    XRAY_ARC = "xray.exe"
-else:
-    XRAY_DIR = Path("/tmp")
-    XRAY_BIN = XRAY_DIR / "xray-core"
-    XRAY_URL = "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
-    XRAY_ARC = "xray"
+XRAY_BIN = Path("/tmp/xray-core")
+XRAY_URL = "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
 
 EUROPE = {"AD","AL","AT","BA","BE","BG","BY","CH","CY","CZ","DE","DK","EE","ES","FI","FO","FR","GB","GG","GI","GR","HR","HU","IE","IM","IS","IT","JE","LI","LT","LU","LV","MC","MD","ME","MK","MT","NL","NO","PL","PT","RO","RS","SE","SI","SK","SM","UA","VA","AX","XK"}
 ALLOWED = EUROPE - {"RU"}
@@ -132,13 +122,11 @@ def parse_server(link):
 
 def ensure_xray():
     if XRAY_BIN.exists(): return XRAY_BIN
-    XRAY_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading Xray for {platform.system()}...")
+    print("Downloading Xray...")
     r = requests.get(XRAY_URL, timeout=120); r.raise_for_status()
     with zipfile.ZipFile(BytesIO(r.content)) as z:
-        XRAY_BIN.write_bytes(z.read(XRAY_ARC))
-    if not IS_WINDOWS:
-        XRAY_BIN.chmod(0o755)
+        XRAY_BIN.write_bytes(z.read("xray"))
+    XRAY_BIN.chmod(0o755)
     print(f"Xray ready: {XRAY_BIN}")
     return XRAY_BIN
 
@@ -229,10 +217,8 @@ def real_test(s, xray_bin):
         json.dump(cfg, f); cfg_path = f.name
     proc = None
     try:
-        creationflags = 0x08000000 if IS_WINDOWS else 0
         proc = subprocess.Popen([str(xray_bin), "run", "-c", cfg_path],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                creationflags=creationflags)
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 3
         started = False
         while time.time() < deadline:
@@ -293,8 +279,7 @@ def randomize_name(s):
     return f"{base}#{quote(name)}"
 
 def main():
-    print(f"=== Filter v4 ({platform.system()}) ===")
-    print(f"MAX_PING_MS = {MAX_PING_MS}")
+    print("=== Freedom filter (Linux) ===")
     r = requests.get(FUNDAMENTAL_URL, timeout=30); r.raise_for_status()
     try:
         decoded = base64.b64decode(b64_pad(r.text.strip())).decode("utf-8", errors="ignore")
