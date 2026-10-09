@@ -41,7 +41,7 @@ try {
 }
 
 # Ensure deps
-& $py -m pip install --quiet --disable-pip-version-check requests 2>&1 | ForEach-Object { Log "pip: $_" }
+& $py -m pip install --quiet --disable-pip-version-check requests PySocks 2>&1 | ForEach-Object { Log "pip: $_" }
 
 # Set local threshold (100ms) before running main.py
 $env:MAX_PING_MS = "100"

@@ -149,7 +149,7 @@ def build_outbound(s):
         stream = {"network": net}
         if sec in ("tls", "reality"):
             stream["security"] = sec
-            ts = {"allowInsecure": True, "serverName": s["sni"]}
+            ts = {"serverName": s["sni"]}
             if s["fp"]: ts["fingerprint"] = s["fp"]
             if s["alpn"]: ts["alpn"] = [a for a in s["alpn"].split(",") if a]
             stream["tlsSettings"] = ts
@@ -178,7 +178,7 @@ def build_outbound(s):
         alpn = p.get("alpn","") or ""
         stream = {"network": net, "security": sec}
         if sec == "tls":
-            ts = {"serverName": sni, "allowInsecure": True, "fingerprint": fp}
+            ts = {"serverName": sni, "fingerprint": fp}
             if alpn: ts["alpn"] = [a for a in alpn.split(",") if a]
             stream["tlsSettings"] = ts
         elif sec == "reality":
@@ -204,7 +204,7 @@ def build_outbound(s):
         host_header = p.get("host","") or ""
         stream = {"network": net, "security": sec}
         if sec == "tls":
-            stream["tlsSettings"] = {"serverName": sni, "allowInsecure": True, "fingerprint": fp}
+            stream["tlsSettings"] = {"serverName": sni, "fingerprint": fp}
         if net == "ws":
             stream["wsSettings"] = {"path": path, "headers": {"Host": host_header or sni}}
         elif net == "grpc":
