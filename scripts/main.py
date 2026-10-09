@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freedom-V2Ray filter for GitHub Actions - geo filter only, no US-side test."""
+"""Freedom-V2Ray filter - only VLESS + Shadowsocks, Europe (excl RU)."""
 import base64, json, random, socket, sys, time
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -9,6 +9,8 @@ FUNDAMENTAL_URL = "https://raw.githubusercontent.com/MahanKenway/Freedom-V2Ray/m
 MAX_SERVERS = 500
 GEO_BATCH_URL = "http://ip-api.com/batch?fields=query,countryCode,status"
 OUTPUT_PATH = Path("output/mix_sub.txt")
+
+ALLOWED_TYPES = {"vless", "ss"}  # ONLY these protocols
 
 EUROPE = {"AD","AL","AT","BA","BE","BG","BY","CH","CY","CZ","DE","DK","EE","ES","FI","FO","FR","GB","GG","GI","GR","HR","HU","IE","IM","IS","IT","JE","LI","LT","LU","LV","MC","MD","ME","MK","MT","NL","NO","PL","PT","RO","RS","SE","SI","SK","SM","UA","VA","AX","XK"}
 ALLOWED = EUROPE - {"RU"}
@@ -29,14 +31,6 @@ def gen_name(cc):
 
 def b64_pad(s):
     return s + "=" * (-len(s) % 4)
-
-def parse_vmess(link):
-    try:
-        data = json.loads(base64.b64decode(b64_pad(link[8:])).decode("utf-8", errors="ignore"))
-    except Exception:
-        return None
-    if not data.get("add") or not data.get("port"): return None
-    return {"type":"vmess","host":data["add"],"port":int(data["port"]),"raw":link}
 
 def parse_url_like(link, scheme):
     rest = link[len(scheme)+3:]
@@ -75,11 +69,9 @@ def parse_ss(link):
 
 def parse_server(link):
     link = link.strip()
-    if link.startswith("vmess://"):  return parse_vmess(link)
-    if link.startswith("vless://"):  return parse_url_like(link, "vless")
-    if link.startswith("trojan://"): return parse_url_like(link, "trojan")
-    if link.startswith("ss://"):     return parse_ss(link)
-    return None
+    if link.startswith("vless://"): return parse_url_like(link, "vless")
+    if link.startswith("ss://"):    return parse_ss(link)
+    return None  # skip vmess, trojan, anything else
 
 def geo_lookup(hosts):
     result = {}; ip_to_host = {}
@@ -103,18 +95,12 @@ def geo_lookup(hosts):
 
 def randomize_name(s):
     name = gen_name(s.get("cc",""))
-    if s["type"] == "vmess":
-        try:
-            data = json.loads(base64.b64decode(b64_pad(s["raw"][8:])).decode("utf-8", errors="ignore"))
-        except Exception:
-            return s["raw"]
-        data["ps"] = name
-        return "vmess://" + base64.b64encode(json.dumps(data, separators=(",",":"), ensure_ascii=False).encode()).decode()
+    # vless and ss use # fragment
     base = s["raw"].split("#", 1)[0]
     return f"{base}#{quote(name)}"
 
 def main():
-    print("=== Freedom filter (geo only) ===")
+    print("=== Freedom filter (VLESS + SS only, Europe) ===")
     r = requests.get(FUNDAMENTAL_URL, timeout=30); r.raise_for_status()
     try:
         decoded = base64.b64decode(b64_pad(r.text.strip())).decode("utf-8", errors="ignore")
@@ -122,9 +108,20 @@ def main():
         decoded = r.text
     lines = [l.strip() for l in decoded.splitlines() if l.strip()]
     print(f"Total lines: {len(lines)}")
-    servers = [s for s in (parse_server(l) for l in lines) if s]
+
+    counts = {"vless": 0, "ss": 0, "skipped": 0}
+    servers = []
+    for l in lines:
+        if l.startswith("vless://"): counts["vless"] += 1
+        elif l.startswith("ss://"):  counts["ss"] += 1
+        else: counts["skipped"] += 1; continue
+        s = parse_server(l)
+        if s: servers.append(s)
+
+    print(f"VLESS: {counts['vless']}, Shadowsocks: {counts['ss']}, skipped (vmess/trojan/other): {counts['skipped']}")
     print(f"Parsed: {len(servers)}")
     if not servers: return
+
     print("Geo lookup...")
     geo = geo_lookup([s["host"] for s in servers])
     eu = []
@@ -133,11 +130,16 @@ def main():
         if cc and cc in ALLOWED:
             s["cc"] = cc; eu.append(s)
     print(f"Europe (excl. RU): {len(eu)}")
+
     if not eu:
         print("No European servers, keeping previous output."); return
+
     random.shuffle(eu)
     final = eu[:MAX_SERVERS]
-    print(f"Selected: {len(final)} servers")
+    vless_n = sum(1 for s in final if s["type"]=="vless")
+    ss_n = sum(1 for s in final if s["type"]=="ss")
+    print(f"Selected: {len(final)} servers (VLESS: {vless_n}, SS: {ss_n})")
+
     out_lines = [randomize_name(s) for s in final]
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     encoded = base64.b64encode("\n".join(out_lines).encode("utf-8")).decode("ascii")
